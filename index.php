@@ -20,6 +20,26 @@ function clearJson($jsonData) {
     return preg_match('~\"(.*)\"~', $jsonData, $matches) ? $matches[0] : '';
 }
 
+function cacheFactory(callable $fn, $path, $seconds = 3600)
+{
+    return function () use ($fn, $path, $seconds) {
+        $args = func_get_args();
+        $file = $path . '/' . md5(serialize($args));
+        if (file_exists($file)) {
+            $content = unserialize(file_get_contents($file));
+            if ($content['endTime'] > time())
+                return $content['value'];
+
+            unlink($file);
+        }
+        $value = call_user_func_array($fn, $args);
+        $content['value'] = $value;
+        $content['endTime'] = time() + $seconds;
+        file_put_contents($file, serialize($content));
+        return $value;
+    };
+}
+
 function getContent($url) {
     $ch = curl_init();
     curl_setopt($ch, CURLOPT_URL, $url);
@@ -92,7 +112,8 @@ function getSitePageProxiesFactory(callable $crawler): Closure
 }
 
 $proxyUrl = 'http://free-proxy.cz/en/';
-$crawler = crawlerFactory('getContent');
+$cache = cacheFactory('getContent', __DIR__ . '/cache', 60 * 5);
+$crawler = crawlerFactory($cache);
 $getSiteMaxPageNumber = getSiteMaxPageNumberFactory($crawler, 5);
 $getSitePages = getSitePagesFactory($getSiteMaxPageNumber);
 $getSitePageProxies = getSitePageProxiesFactory($crawler);
