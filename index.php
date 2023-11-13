@@ -20,6 +20,14 @@ function clearJson($jsonData) {
     return preg_match('~\"(.*)\"~', $jsonData, $matches) ? $matches[0] : '';
 }
 
+function ping($proxy) {
+    if (!$fp = fsockopen($proxy['ip'], $proxy['port'], $errno, $errstr, 10))
+        return false;
+
+    fclose($fp);
+    return true;
+}
+
 function parallel_map(callable $fn, array $items)
 {
     $childPids = [];
@@ -145,16 +153,49 @@ function getSitePageProxiesFactory(callable $crawler): Closure
     };
 }
 
+function checkProxyFactory($url): Closure
+{
+    return function ($proxy) use ($url) {
+        $ch = curl_init();
+        curl_setopt($ch, CURLOPT_URL, $url);
+        curl_setopt($ch, CURLOPT_PROXY,
+            "{$proxy['protocol']}://{$proxy['ip']}:{$proxy['port']}");
+        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+        curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
+        curl_setopt($ch, CURLOPT_CUSTOMREQUEST, 'GET');
+        curl_setopt($ch, CURLOPT_TIMEOUT, 9);
+        curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 6);
+        curl_exec($ch);
+        $status = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        curl_close($ch);
+        return $status >=200 && $status < 300;
+    };
+}
+
+function getActiveProxiesFactory(callable $checkProxy): Closure
+{
+    return function ($proxies) use ($checkProxy) {
+        return filter(function ($proxy) use ($checkProxy) {
+            return $checkProxy($proxy);
+        }, $proxies);
+    };
+}
+
 $proxyUrl = 'http://free-proxy.cz/en/';
 $cache = cacheFactory('getContent', __DIR__ . '/cache', 60 * 5);
 $crawler = crawlerFactory($cache);
 $getSiteMaxPageNumber = getSiteMaxPageNumberFactory($crawler, 5);
 $getSitePages = getSitePagesFactory($getSiteMaxPageNumber);
 $getSitePageProxies = getSitePageProxiesFactory($crawler);
+$checkProxy = checkProxyFactory('http://httpbin.org/get');
+$getActiveProxies = getActiveProxiesFactory($checkProxy);
 
 $proxies =
-    array_filter(
-        reduce('array_merge',
-            parallel_map($getSitePageProxies,
-                array_chunk(
-                    $getSitePages($proxyUrl), 10)), []));
+    reduce('array_merge',
+        parallel_map($getActiveProxies,
+            array_chunk(
+                array_filter(
+                    reduce('array_merge',
+                        parallel_map($getSitePageProxies,
+                            array_chunk(
+                                $getSitePages($proxyUrl), 10)), [])), 10)), []);
