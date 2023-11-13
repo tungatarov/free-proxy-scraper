@@ -20,6 +20,39 @@ function clearJson($jsonData) {
     return preg_match('~\"(.*)\"~', $jsonData, $matches) ? $matches[0] : '';
 }
 
+function parallel_map(callable $fn, array $items)
+{
+    $childPids = [];
+    $result = [];
+    foreach ($items as $i => $item) {
+        $newPid = pcntl_fork();
+        if ($newPid == -1) {
+            die('can\'t fork the process');
+        } elseif ($newPid) {
+            $childPids[] = $newPid;
+            if ($i == count($items) - 1) {
+                foreach ($childPids as $childPid) {
+                    pcntl_waitpid($childPid, $status);
+                    $sharedId = shmop_open($childPid, 'a', 0, 0);
+                    $sharedData = shmop_read($sharedId, 0, shmop_size($sharedId));
+                    $result[] = unserialize($sharedData);
+                    shmop_delete($sharedId);
+                    if (PHP_MAJOR_VERSION < 8)
+                        shmop_close($sharedId);
+                }
+            }
+        } else {
+            $myPid = getmypid();
+            $funcResult = $fn($item);
+            $sharedData = serialize($funcResult);
+            $sharedId = shmop_open($myPid, 'c', 644, strlen($sharedData));
+            shmop_write($sharedId, $sharedData, 0);
+            exit(0);
+        }
+    }
+    return $result;
+}
+
 function cacheFactory(callable $fn, $path, $seconds = 3600)
 {
     return function () use ($fn, $path, $seconds) {
@@ -101,7 +134,8 @@ function getSitePageProxiesFactory(callable $crawler): Closure
                     return [];
 
                 return [
-                    'ip' => base64_decode(clearJson($row->eq(0)->text())),
+                    'ip' => base64_decode(
+                        clearJson($row->eq(0)->text())),
                     'port' => $row->eq(1)->text(),
                     'protocol' => $row->eq(2)->text(),
                     'anonymity' => $row->eq(6)->text()
@@ -121,5 +155,6 @@ $getSitePageProxies = getSitePageProxiesFactory($crawler);
 $proxies =
     array_filter(
         reduce('array_merge',
-            array_map($getSitePageProxies,
-                $getSitePages($proxyUrl)), []));
+            parallel_map($getSitePageProxies,
+                array_chunk(
+                    $getSitePages($proxyUrl), 10)), []));
