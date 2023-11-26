@@ -172,12 +172,17 @@ function checkProxyFactory($url): Closure
     };
 }
 
-function getActiveProxiesFactory(callable $checkProxy): Closure
+function byActiveFilterFactory(callable $checkProxy): Closure
 {
-    return function ($proxies) use ($checkProxy) {
-        return filter(function ($proxy) use ($checkProxy) {
-            return $checkProxy($proxy);
-        }, $proxies);
+    return function ($proxy) use ($checkProxy) {
+        return $checkProxy($proxy);
+    };
+}
+
+function getActiveProxiesFactory(callable $byActiveFilter): Closure
+{
+    return function ($proxies) use ($byActiveFilter) {
+        return filter($byActiveFilter, $proxies);
     };
 }
 
@@ -203,7 +208,8 @@ $getSiteMaxPageNumber = getSiteMaxPageNumberFactory($crawler, 5);
 $getSitePages = getSitePagesFactory($getSiteMaxPageNumber);
 $getSitePageProxies = getSitePageProxiesFactory($crawler);
 $checkProxy = checkProxyFactory('http://httpbin.org/get');
-$getActiveProxies = getActiveProxiesFactory($checkProxy);
+$byActiveFilter = byActiveFilterFactory($checkProxy);
+$getActiveProxies = getActiveProxiesFactory($byActiveFilter);
 $scrapeProxies = scrapeProxiesFactory($getSitePages, $getSitePageProxies, $getActiveProxies, 10);
 
 $proxies = $scrapeProxies($proxyUrl);
