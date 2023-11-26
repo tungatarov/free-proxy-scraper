@@ -181,6 +181,21 @@ function getActiveProxiesFactory(callable $checkProxy): Closure
     };
 }
 
+function scrapeProxiesFactory($getSitePages, $getSitePageProxies, $getActiveProxies, $chunkSize): Closure
+{
+    return function ($proxyUrl) use ($getSitePages, $getSitePageProxies, $getActiveProxies, $chunkSize) {
+        return
+            reduce('array_merge',
+                parallel_map($getActiveProxies,
+                    array_chunk(
+                        array_filter(
+                            reduce('array_merge',
+                                parallel_map($getSitePageProxies,
+                                    array_chunk(
+                                        $getSitePages($proxyUrl), $chunkSize)), [])), $chunkSize)), []);
+    };
+}
+
 $proxyUrl = 'http://free-proxy.cz/en/';
 $cache = cacheFactory('getContent', __DIR__ . '/cache', 60 * 5);
 $crawler = crawlerFactory($cache);
@@ -189,13 +204,6 @@ $getSitePages = getSitePagesFactory($getSiteMaxPageNumber);
 $getSitePageProxies = getSitePageProxiesFactory($crawler);
 $checkProxy = checkProxyFactory('http://httpbin.org/get');
 $getActiveProxies = getActiveProxiesFactory($checkProxy);
+$scrapeProxies = scrapeProxiesFactory($getSitePages, $getSitePageProxies, $getActiveProxies, 10);
 
-$proxies =
-    reduce('array_merge',
-        parallel_map($getActiveProxies,
-            array_chunk(
-                array_filter(
-                    reduce('array_merge',
-                        parallel_map($getSitePageProxies,
-                            array_chunk(
-                                $getSitePages($proxyUrl), 10)), [])), 10)), []);
+$proxies = $scrapeProxies($proxyUrl);
